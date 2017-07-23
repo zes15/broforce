@@ -1,0 +1,361 @@
+#! /usr/bin/python
+
+# import our modules
+from __future__ import print_function
+from classes import *
+from functions import *
+import levels
+#from gifimage import *
+
+import time, os, sys
+
+
+def main():
+    global cameraX, cameraY
+    global RESET_LEVEL_FLAG
+    RESET_LEVEL_FLAG = False
+    pygame.mixer.pre_init(44100,16,2,4096)
+    pygame.init()
+
+    print ("Game loaded.")
+    loading = False
+    os.environ['SDL_VIDEO_CENTERED'] = '1'
+    screen = pygame.display.set_mode(classes.DISPLAY, classes.FLAGS, classes.DEPTH)
+    hud = pygame.display.set_mode(classes.DISPLAY, classes.FLAGS, classes.DEPTH)
+    timer = pygame.time.Clock()
+
+    # definitions
+    up = down = left = right = running = False
+    #bullet = None
+
+    current_level = 1 # start at level 1
+    level = get_level(current_level)
+
+    # helps draw background
+    CURRENT_WIN_WIDTH = copy(WIN_WIDTH)
+    camera_state = 0
+
+    # loads background music
+    pygame.mixer.music.load(MUSIC_DIRECTORY + "/background/noah_background.ogg")
+    pygame.mixer.music.set_volume(0.5)
+    pygame.mixer.music.play(-1)
+
+    bg = pygame.image.load(levels.BACKGROUNDS[current_level])
+
+    bg = pygame.transform.scale(bg, (WIN_WIDTH, WIN_HEIGHT))
+    bg = bg.convert_alpha()
+
+    entities = pygame.sprite.Group()
+    bullets = pygame.sprite.Group()
+    blocks = pygame.sprite.Group()
+    enemy_sprites = pygame.sprite.Group()
+    collision_block_sprites = pygame.sprite.Group()
+    indestructibles = pygame.sprite.Group()
+    coin_sprites = pygame.sprite.Group()
+
+    platforms = []
+    collision_blocks = []
+    enemies = []
+    coins = []
+
+    revive = False # used to display respawn text
+    revive_text_counter = 0
+
+     # create list of different block types
+    block_types = [
+        Unbreakable1(), Unbreakable2(), BaigeBlock(),
+        NeonRedBlock(), NeonWhiteBlock(), NeonBlueBlock(), NeonYellowBlock(), NeonOrangeBlock(), NeonGreenBlock(),
+        BlueBlock(), GrayBlock(), BrightBlueBlock(), BrownBlock(),
+        CollisionBlock(), CornerPatrolBlock()
+    ]
+
+    # set our desired FPS
+    __FPS = 70
+
+    # pack arg list to build level
+    args = current_level, level, enemies, enemy_sprites, platforms, blocks,\
+    entities, Platform, block_types, collision_blocks,\
+    collision_block_sprites, indestructibles, coins, coin_sprites
+
+    # build level and unpack return values
+    platforms, blocks, entities, enemies, enemy_sprites,\
+    collision_block_sprites, indestructibles, collision_blocks,\
+    coins, coin_sprites = build_level(*args)
+
+    # generate size of level and set camera
+    pygame.total_level_width  = len(level[0])*32
+    pygame.total_level_height = len(level)*32
+    camera = Camera(complex_camera, pygame.total_level_width, pygame.total_level_height)
+
+    elapsed_playtime = 0 # keeps track of play time in seconds
+    current_life_playtime = 0
+    current_score, score = 0, 0
+    lives = copy(MAX_LIVES)
+    player = Player(levels.SPAWN_POINT_LEVEL[1][0], levels.SPAWN_POINT_LEVEL[1][1])
+    entities.add(player) # adds player to the list of entities
+
+    """ main game loop """
+    main_loop = True
+    #game_over = False
+    while main_loop:
+        """ handle fps and elapsed_playtime counter """
+        fps = timer.tick(__FPS) # max fps
+        elapsed_playtime += fps / 1000.0
+        current_life_playtime += fps / 1000.0
+        time_remaining = float(levels.MAX_PLAYTIME_PER_LEVEL[current_level]-current_life_playtime)
+
+        """ display fps and playtime on window """
+        text_display = "Time remaining: %.1f" % time_remaining + "s"
+        text_display += "          Current score: " + str(current_score).zfill(8)
+        text_display += "                                  "
+        text_display += "FPS: {0:.2f}          Elapsed time: {1:.1f}s".format(timer.get_fps(), elapsed_playtime)
+        pygame.display.set_caption(text_display)
+
+        """ PLAYER BEAT THE LEVEL """
+        if RESET_LEVEL_FLAG:
+            # moves to next level
+            current_level += 1
+            # changes background
+            bg = pygame.image.load(levels.BACKGROUNDS[current_level])
+            bg = pygame.transform.scale(bg, (WIN_WIDTH, WIN_HEIGHT))
+            bg = bg.convert_alpha()
+
+            current_life_playtime = 0
+            camera_state = 0
+            RESET_LEVEL_FLAG = False
+            level = get_level(current_level)
+            # package arguments for reset level
+            args = screen, player, level, current_level, platforms, bullets,\
+            blocks, entities, enemies, enemy_sprites, Platform,\
+            block_types, collision_blocks, collision_block_sprites, indestructibles, levels.SPAWN_POINT_LEVEL,\
+            coins, coin_sprites
+
+            # call reset level
+            player, platforms, blocks, collision_blocks, collision_block_sprites,\
+            entities, enemies, enemy_sprites, indestructibles, coins, coin_sprites = reset_level(*args)
+            # reset camera
+            pygame.total_level_width  = len(level[0])*32
+            pygame.total_level_height = len(level)*32
+            camera = Camera(complex_camera, pygame.total_level_width, pygame.total_level_height)
+
+        """ event handler """
+        for e in pygame.event.get():
+            if e.type == QUIT or (e.type == KEYDOWN and e.key == K_ESCAPE):
+                #game_over = True
+                main_loop = False
+            if e.type == KEYDOWN and e.key == K_w:
+                up = True
+                player.jump = True
+                player.images = player.jumping
+                player.frame_counter, player.counter = 0, 0
+            if e.type == KEYDOWN and e.key == K_s:
+                down = True
+            if e.type == KEYDOWN and e.key == K_a:
+                left = True
+                player.images = player.running
+                player.frame_counter, player.counter = 0, 0
+            if e.type == KEYDOWN and e.key == K_d:
+                right = True
+                player.images = player.running
+                player.frame_counter, player.counter = 0, 0
+            if e.type == KEYDOWN and e.key == K_LSHIFT:
+                running = True
+            if e.type == KEYUP and e.key == K_w:
+                up = False
+            if e.type == KEYUP and e.key == K_s:
+                down = False
+            if e.type == KEYUP and e.key == K_d:
+                right = False
+                player.images = player.standing
+                player.frame_counter, player.counter = 0, 0
+            if e.type == KEYUP and e.key == K_a:
+                left = False
+                player.images = player.standing
+                player.frame_counter, player.counter = 0, 0
+            if e.type == KEYUP and e.key == K_LSHIFT:
+                running = False
+            if ((e.type == KEYDOWN and e.key == K_f) or (e.type == pygame.MOUSEBUTTONDOWN and e.button == 3)) and not left and not right:# and player.facing_right == True):
+                if player.strong_attack_timer >= 90:
+                    player.strong_attack = True
+                    player.strong_attack_timer = 0
+                    bullet = Bullet(pygame.mouse.get_pos(),
+                    [player.rect.x, player.rect.y, player.attack_height], camera.state, player.facing_right, 'player_strong_attack')
+                    if player.facing_right:
+                        bullet.rect.x = player.rect.x + player.attack_height/2 + 10  # - player.height/2# / 2
+                    else:
+                        bullet.rect.x = player.rect.x - player.attack_height/2 - 10
+                    bullet.rect.y = player.rect.y - player.attack_height/2 + 10  # + player.height/2# / 2
+                    entities.add(bullet)
+                    bullets.add(bullet)
+            if (e.type == KEYDOWN and e.key == K_SPACE) or\
+            (e.type == pygame.MOUSEBUTTONDOWN and e.button == 1) or\
+            (e.type == KEYDOWN and e.key == K_k) and player.melee_attack == False:
+                player.melee_attack = True
+
+        """ move background while camera moves """
+        if -1 * camera.state[0] >= CURRENT_WIN_WIDTH:#_RIGHT:
+            CURRENT_WIN_WIDTH += WIN_WIDTH
+            camera_state = camera.state[0]
+        elif -1 * camera.state[0] < CURRENT_WIN_WIDTH:#_LEFT:
+            CURRENT_WIN_WIDTH -= WIN_WIDTH
+            camera_state = camera.state[0]
+
+        """ DRAW MOVING BACKGROUND """
+        # if player is moving right
+        if camera.state[0] <= camera_state:
+            camera_state = camera.state[0]
+            screen.blit(bg, (CURRENT_WIN_WIDTH - WIN_WIDTH + camera.state[0],0))
+            screen.blit(bg,(CURRENT_WIN_WIDTH + camera.state[0],0))
+        # if player is moving left
+        elif camera.state[0] > camera_state:
+            camera_state = camera.state[0]
+            screen.blit(bg, (CURRENT_WIN_WIDTH - WIN_WIDTH + camera.state[0],0))
+            screen.blit(bg,(CURRENT_WIN_WIDTH + camera.state[0],0))
+
+        """ update bullets, camera """
+        bullets.update()
+        camera.update(player)
+
+        """ update player and check if reached next level """
+        args = up, down, left, right, running, platforms, enemies, enemy_sprites,\
+        bullets, camera, collision_blocks, RESET_LEVEL_FLAG, entities, blocks
+        result = player.update(*args)
+        # remove patrol blocks, but not corner colision blocks
+        if result is not None and result in collision_blocks:
+            if result.patrol is False:
+                collision_blocks.remove(result)
+                collision_block_sprites.remove(result)
+                entities.remove(result)
+        # reset level if player reached end of level
+        elif result is not None and result == "Reset Level":
+            RESET_LEVEL_FLAG = True
+
+        # handle bullet collision
+        if len(bullets) > 0:
+            args = bullets, blocks, platforms, entities, enemies, enemy_sprites, indestructibles, score
+            bullets, entities, platforms, blocks, enemies, enemy_sprites, score = bullet_collision(*args)
+
+        # display loading when screen lags
+        if timer.get_fps() < 55 and not loading and lives > 0:
+            #loading(screen, cache)
+            print('Loading...')
+            loading = True
+        elif timer.get_fps() >= 55 and loading and lives > 0:
+            loading = False
+
+        # if player has fallen off screen or hit an enemy, player has died
+        if player.rect.y > len(level) * 32 or player.health <= 0 or time_remaining <= 0:
+            CURRENT_WIN_WIDTH = copy(WIN_WIDTH)
+            lives -= 1 # count number of deaths
+            # if player has run out of lives, set player back to level 1 and reset score
+            if lives <= 0:
+                current_level = 1
+                bg = pygame.image.load(levels.BACKGROUNDS[current_level])
+                bg = pygame.transform.scale(bg, (WIN_WIDTH, WIN_HEIGHT))
+                bg = bg.convert_alpha()
+                current_score, score, current_level, lives = 0, 0, 1, MAX_LIVES
+                level = get_level(current_level)
+                # generate size of level and set camera
+                pygame.total_level_width  = len(level[0])*32
+                pygame.total_level_height = len(level)*32
+                camera = Camera(complex_camera, pygame.total_level_width, pygame.total_level_height)
+                gameOver(screen, cache)
+            else:
+                revive = True
+            # build argument list
+            args = screen, player, level, current_level, platforms, bullets,\
+            blocks, entities, enemies, enemy_sprites, Platform,\
+            block_types, collision_blocks, collision_block_sprites, indestructibles,\
+            levels.SPAWN_POINT_LEVEL, coins, coin_sprites
+            # call reset level function with *args
+            player, platforms, blocks, collision_blocks, collision_block_sprites,\
+            entities, enemies, enemy_sprites, indestructibles, coins, coin_sprites = reset_level(*args)
+            current_life_playtime = 0
+
+        # display revive text
+        if revive is True:
+            revive_text_counter += 1
+            if revive_text_counter == 50:
+                revive = False
+                revive_text_counter = 0
+            else:
+                text = get_msg('Try again bruh...', cache)
+                text_rect = text.get_rect()
+                text_x = screen.get_width() / 2 - text_rect.width / 2
+                text_y = screen.get_height() / 2 - text_rect.height / 2
+                hud.blit(text, [text_x, text_y])
+        #current_score = scrollScore(current_score, score) # animate scrolling effect on score
+        #current_score = score # score no scrolling
+
+        # update enemies
+        for enemy in enemies:
+            # only update when entity is on the screen
+            if functions.on_screen(player.rect, enemy.rect, WIN_WIDTH, WIN_HEIGHT):
+                enemy.health_counter += 1
+                # count frames to stop displaying healthbar
+                if enemy.health_counter >= MAX_HEALTH_FRAMES:
+                    enemy.health_counter = 0
+                    enemy.healthTrigger = False
+
+                if type(enemy).__name__ == "GarbageCollector" or \
+                   isinstance(enemy, PySnake) or \
+                   isinstance(enemy, Ghost) or \
+                   isinstance(enemy, Dragon):
+                    # call update functions for garbage collector, pysnake, ghost, & dragon
+                    enemy.update(platforms, collision_blocks, blocks, entities, bullets)
+                    if enemy.dead():
+                        # if ghost out of level, respawn
+                        if isinstance(enemy, Ghost):
+                            enemy.rect.x, enemy.rect.y = enemy.spawn_position
+                        else:
+                            delete_enemy(enemy, enemy_sprites, enemies, entities)
+                else:
+                    enemy.update()
+
+        #print("player x = ", player.rect.x)#, "\n camera-y = ", camera.state[1])
+        #print("player y = ", player.rect.y)
+
+        # update coins
+        for c in coins:
+            # only update when entity is on the screen
+            if functions.on_screen(player.rect, c.rect, WIN_WIDTH, WIN_HEIGHT):
+                # player got the coin
+                if c.update(player):
+                    coins.remove(c)
+                    coin_sprites.remove(c)
+                    entities.remove(c)
+                    current_score += 10
+
+        # update any additional on the screenentities
+        for e in entities:
+            screen.blit(e.image, camera.apply(e))
+
+        # display player healthbar, timer, score, and lives
+        healthBar(player, player.health, hud, cache)
+        displayTimer(hud, "%.1f" % time_remaining + "s", current_score, cache)
+        displayLives(hud, lives, cache)
+
+        for enemy in enemies:
+            # if enemy was recently attacked
+            if enemy.healthTrigger:
+                # draw garbage collector healthbar
+                if type(enemy).__name__ == "GarbageCollector":
+                    garbageCollectorHealthBar(enemy, hud, camera.state)
+                # draw regular enemy healthbar
+                else:
+                    enemyHealthBar(enemy.health, enemy, hud, camera.state)
+                    
+        # draw attack cooldown
+        attack_cooldown(player, hud)
+
+        # refresh screen at end of each frame
+        pygame.display.flip()
+
+    # draw game over and end the game
+    gameOver(screen, cache)
+    print("Game terminated..\nTotal Runtime: ", str(elapsed_playtime), "s.")
+    pygame.quit()
+    sys.exit()
+
+if __name__ == "__main__":
+    main()
